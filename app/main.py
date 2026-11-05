@@ -1,4 +1,5 @@
-from fastapi import FastAPI, Request, Header, HTTPException
+
+from fastapi import FastAPI, Request, Header, HTTPException, Depends
 
 from app.security.api_key import (
     generate_api_key,
@@ -7,8 +8,9 @@ from app.security.api_key import (
 )
 
 from app.security.ip_filter import check_ip
-from app.security.rate_limiter import check_rate_limit
+from app.security.rate_limiter import rate_limit
 from app.security.logger import log_event
+
 
 app = FastAPI(
     title="Sentinel API",
@@ -16,7 +18,8 @@ app = FastAPI(
     version="1.0.0"
 )
 
-# Generate an API key for demonstration
+
+# Generate API key
 API_KEY = generate_api_key()
 API_KEY_HASH = hash_api_key(API_KEY)
 
@@ -29,18 +32,17 @@ print("================================\n")
 # Security verification
 def security_check(
     request: Request,
-    x_api_key: str = Header(alias="X-API-Key")
+    x_api_key: str | None = Header(default=None, alias="X-API-Key")
 ):
-
-    client_ip = request.client.host
+    client_ip = request.client.host if request.client else "unknown"
 
     # 1. Verify API key
-    if not verify_api_key(x_api_key, API_KEY_HASH):
-        log_event(f"Invalid API key from {client_ip}")
+    if not x_api_key or not verify_api_key(x_api_key, API_KEY_HASH):
+        log_event(f"Invalid or missing API key from {client_ip}")
 
         raise HTTPException(
             status_code=401,
-            detail="Invalid API key"
+            detail="Invalid or missing API key"
         )
 
     # 2. Verify IP address
@@ -50,46 +52,44 @@ def security_check(
         log_event(f"Blocked IP: {client_ip}")
         raise
 
-    # 3. Check rate limit
-    try:
-        check_rate_limit(API_KEY_HASH)
-    except HTTPException:
-        log_event(f"Rate limit exceeded: {client_ip}")
-        raise
-
     log_event(f"Access granted: {client_ip}")
 
     return True
 
 
-# Public endpoint
-@app.get("/")
+# Endpoint 1: Home
+@app.get(
+    "/",
+    dependencies=[Depends(rate_limit())]
+)
 def home():
-
     return {
         "project": "Sentinel API",
         "status": "running"
     }
 
 
-# Protected endpoint
-@app.get("/protected")
-def protected(
-    authorized: bool = __import__(
-        "fastapi"
-    ).Depends(security_check)
-):
-
+# Endpoint 2: Health
+@app.get(
+    "/health",
+    dependencies=[Depends(rate_limit())]
+)
+def health():
     return {
-        "message": "Access granted",
-        "security": "All checks passed"
+        "status": "healthy"
     }
 
 
-# Health endpoint
-@app.get("/health")
-def health():
-
+# Endpoint 3: Protected
+@app.get(
+    "/protected",
+    dependencies=[
+        Depends(rate_limit()),
+        Depends(security_check)
+    ]
+)
+def protected():
     return {
-        "status": "healthy"
+        "message": "Access granted",
+        "security": "All checks passed"
     }
