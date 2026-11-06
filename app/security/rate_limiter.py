@@ -1,12 +1,11 @@
 from collections import defaultdict, deque
 from time import monotonic
 from threading import Lock
-
+from app.security.prime_checker import is_prime
 from fastapi import Request, HTTPException
 
 
-# Rate-limit configuration
-RATE_LIMIT = 10
+MAX_REQUESTS = 100
 TIME_WINDOW = 60
 
 # Store request timestamps separately for each client and endpoint
@@ -16,7 +15,7 @@ request_history = defaultdict(deque)
 rate_limit_lock = Lock()
 
 
-def rate_limit(limit=RATE_LIMIT, window=TIME_WINDOW):
+def rate_limit( window=TIME_WINDOW):
     """
     Reusable rate-limiting dependency.
 
@@ -47,22 +46,25 @@ def rate_limit(limit=RATE_LIMIT, window=TIME_WINDOW):
             while timestamps and current_time - timestamps[0] >= window:
                 timestamps.popleft()
 
-            # Check whether the client exceeded the limit
-            if len(timestamps) >= limit:
+            timestamps.append(current_time)
+            request_count = len(timestamps) 
 
-                retry_after = max(
-                    1,
-                    int(window - (current_time - timestamps[0]))
-                    + 1
-                )
+            print("Request count:", request_count)
+            print("Is prime:", is_prime(request_count))
 
+
+            if request_count > MAX_REQUESTS:
                 raise HTTPException(
                     status_code=429,
-                    detail=f"Rate limit exceeded. Maximum {limit} requests per {window} seconds.",
-                    headers={"Retry-After": str(retry_after)}
+                    detail="Maximum request limit of 100 reached."
                 )
+            # Check whether the client exceeded the limit
+          
+            
 
-            # Record this request
-            timestamps.append(current_time)
-
+            if not is_prime(request_count):
+             raise HTTPException(
+                 status_code=403,
+                 detail=f"Request rejected."
+                            )
     return check_rate_limit
